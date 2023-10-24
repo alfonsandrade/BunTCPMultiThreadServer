@@ -1,10 +1,7 @@
-import * as fs from 'fs';
-import * as crypto from 'crypto';
 import * as path from 'path';
+import { serve, file } from 'bun';
 
-const clients = new Map();
-
-const ROOT_DIRECTORY = '/home/alfons/git/BunTCPChat/';
+const ROOT_DIRECTORY = '/home/alfons/git/BunTCPMultiThreadServer';
 
 const mimeTypes = {
     '.html': 'text/html',
@@ -12,70 +9,57 @@ const mimeTypes = {
     '.jpg': 'image/jpeg'
 };
 
-Bun.listen({
-    hostname: "localhost",
-    port: 8080,
-    socket: {
-        data(socket, rawData) {
-            const data = rawData.toString();
+function generateHeaders(content: string | Buffer, mimeType: string) {
+    const currentDate = new Date().toUTCString();
+    return {
+        'Server': 'Bun-Server/1.0.2', 
+        'Date': currentDate,
+        'Content-Type': mimeType,
+        'Last-Modified': currentDate,
+        'Content-Length': String(content.length)
+    };
+}
 
-            // Analisar a requisição HTTP
-            const lines = data.split("\r\n");
-            const [method, url, protocol] = lines[0].split(" ");
-            
-            if (method === "GET") {
-                const requestedPath = path.join(ROOT_DIRECTORY, url);
-                if (fs.existsSync(requestedPath)) {
-                    const fileExt = path.extname(requestedPath);
-                    const mimeType = mimeTypes[fileExt] || 'application/octet-stream';
-                    const fileData = fs.readFileSync(requestedPath);
-                    const hash = crypto.createHash('sha256').update(fileData).digest('hex');
+function serveFile(req, filePath) {
+    const fileExt = path.extname(filePath);
+    const mimeType = mimeTypes[fileExt] || 'application/octet-stream';
+    
+    try {
+        const content = file(filePath);
+        const headers = generateHeaders(content, mimeType);
+        return new Response(content, { headers });
+    } catch (e) {
+        return send404();
+    }
+}
 
-                    const response = [
-                        "HTTP/1.1 200 OK",
-                        `Server: BunMultiThreadServer`,
-                        `Date: ${new Date().toUTCString()}`,
-                        `Content-Type: ${mimeType}`,
-                        `Content-Length: ${fileData.length}`,
-                        `Content-SHA256: ${hash}`,
-                        "",
-                        ""
-                    ].join("\r\n");
+function send404() {
+    const errorMessage = "File Not Found";
+    const headers = generateHeaders(errorMessage, 'text/html');
+    return new Response(errorMessage, {
+        status: 404,
+        headers
+    });
+}
 
-                    socket.write(response, 'utf-8');
-                    socket.write(fileData);
-                    socket.end();
-                } else {
-                    const errorMessage = "File Not Found";
-                    const errorResponse = [
-                        "HTTP/1.1 404 Not Found",
-                        `Server: BunMultiThreadServer`,
-                        `Date: ${new Date().toUTCString()}`,
-                        "Content-Type: text/html",
-                        `Content-Length: ${errorMessage.length}`,
-                        "",
-                        errorMessage
-                    ].join("\r\n");
-
-                    socket.write(errorResponse, 'utf-8');
-                    socket.end();
-                }
+const server = serve({
+    fetch(req) {
+        const url = new URL(req.url);
+        const requestedPath = path.join(ROOT_DIRECTORY, url.pathname);
+        if (req.method === "GET") {
+            if (url.pathname.endsWith('/') || url.pathname === '') {
+                const indexPath = path.join(requestedPath, 'pagina.html');
+                return serveFile(req, indexPath);
             } else {
-                socket.write("HTTP/1.1 405 Method Not Allowed\r\n\r\n", 'utf-8');
-                socket.end();
+                return serveFile(req, requestedPath);
             }
-        },
-        open(socket) {
-            const sessionId = Date.now().toString(36);
-            socket.data = { sessionId };
-            clients.set(sessionId, socket);
-        },
-        close(socket) {
-            clients.delete(socket.data.sessionId);
-        },
-        error(socket, error) {
-            console.error(`Error on socket: ${error}`);
+        }            
+    },
+    websocket: {
+        message(ws, message) {
+            // Placeholder for websocket support.
         }
     }
 });
 
+console.log(`Listening on localhost:${server.port}`);
